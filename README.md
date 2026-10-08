@@ -2,168 +2,151 @@
 
 **Atividade de Machine Learning** · Regressão · Dataset [CalCOFI](https://www.kaggle.com/datasets/sohier/calcofi) (Kaggle) · Notebook: [temperatura_calcofi.ipynb](temperatura_calcofi.ipynb)
 
-> **Resultado.** Um modelo de Gradient Boosting com 13 variáveis prevê a temperatura da água com **R² = 0,993** e **R² ajustado = 0,993** em estações que ele nunca viu, errando em média **0,20 °C**. Treinado só com 2005–2013, mantém **R² = 0,980** nos anos de 2014–2016.
+> **Resultado.** Um Gradient Boosting com **6 variáveis** prevê a temperatura da água com **R² = 0,990** (R² ajustado = 0,990) em estações que nunca viu, errando em média **0,22 °C**. Treinado só com 2005–2013, mantém **R² = 0,982** em 2014–2016.
 
 | | |
 |---|---|
-| **Problema** | Prever a temperatura da água (`T_degC`) |
-| **Pergunta da base** | Dá para prever a temperatura a partir da salinidade? |
-| **Dados** | 864.863 medições (1949–2016); recorte 2005–2016: 96.655; após a limpeza: 88.143 |
-| **Modelos testados** | 6, do mais simples ao mais completo |
-| **Modelo final** | Gradient Boosting com 13 variáveis |
-| **Métrica principal** | R² ajustado no conjunto de teste |
+| **Pergunta da base** | Dá para prever a temperatura da água a partir da salinidade? |
+| **Pergunta ampliada** | Quais medições permitem prever a temperatura, e qual modelo faz isso melhor? |
+| **Dados** | 864.863 medições (1949–2016) → recorte 2005–2016 → 88.165 após a limpeza |
+| **Modelos testados** | 14 (baseline, 7 lineares, 6 não lineares) |
+| **Modelo final** | Gradient Boosting com 6 variáveis e hiperparâmetros ajustados |
+| **Critério de escolha** | R² da validação cruzada + parcimônia (tolerância de 0,005) |
 
 ## Sumário
 
 1. [A ideia central](#1-a-ideia-central)
-2. [Os dados](#2-os-dados)
-3. [Preparação dos dados](#3-preparação-dos-dados)
-4. [Os modelos, passo a passo](#4-os-modelos-passo-a-passo)
-5. [Comparação](#5-comparação)
-6. [Teste de robustez](#6-teste-de-robustez)
+2. [Dados e limpeza](#2-dados-e-limpeza)
+3. [Como avaliamos](#3-como-avaliamos)
+4. [Parte A — Modelos lineares](#4-parte-a--modelos-lineares)
+5. [Parte B — Modelos não lineares](#5-parte-b--modelos-não-lineares)
+6. [Ferramentas testadas: o que ficou e o que saiu](#6-ferramentas-testadas-o-que-ficou-e-o-que-saiu)
 7. [Modelo final](#7-modelo-final)
 8. [Limitações](#8-limitações)
 9. [Como executar](#9-como-executar)
 
 ## 1. A ideia central
 
-O oceano é organizado em **camadas**. A superfície é aquecida pelo sol; abaixo de ~200 m a água é fria e quase não muda. Cada camada tem uma "assinatura química" própria:
+O oceano é organizado em **camadas**, e cada camada tem uma "assinatura química":
 
-| Camada | Temperatura | Oxigênio | Nutrientes (nitrato, fosfato…) | Salinidade |
+| Camada | Temperatura | Oxigênio | Nutrientes (nitrato, fosfato, silicato) | Salinidade |
 |---|---|---|---|---|
 | Superfície | Quente | Alto (contato com o ar, algas) | Baixos (as algas consomem) | Menor |
-| Fundo | Fria | Baixo | Altos (ninguém consome) | Maior |
+| Fundo | Fria | Baixo | Altos (sem luz, ninguém consome) | Maior |
 
-1. A salinidade sozinha explica só **65%** da temperatura.
-2. Profundidade, oxigênio e nutrientes "denunciam" de que camada a água veio: o modelo linear chega a **95,7%**.
-3. A relação com a profundidade é **curva** (termoclina), então um modelo não linear chega a **99,3%**.
-
-## 2. Os dados
-
-O CalCOFI mede o oceano na costa da Califórnia desde 1949. São dois arquivos ligados pela coluna `Cst_Cnt`:
-
-| Arquivo | Uma linha é… | Exemplos de colunas |
-|---|---|---|
-| `bottle.csv` (864 mil linhas, 74 colunas) | uma medição numa profundidade | `T_degC`, `Salnty`, `Depthm`, `O2ml_L`, `NO3uM` |
-| `cast.csv` (34 mil linhas, 61 colunas) | uma parada do navio (estação) | `Year`, `Month`, `Lat_Dec`, `Lon_Dec`, `Bottom_D` |
-
-### Recorte 2005–2016
-
-Usamos **todas** as medições de 2005 a 2016 (não é amostra aleatória), por três motivos:
-
-- **Dados completos:** antes de 2005 só 31% das linhas têm os nutrientes medidos; depois, 92%.
-- **Coerência:** o oceano esquentou e os instrumentos mudaram em 70 anos.
-- **Tamanho:** ~97 mil medições, e o notebook roda em cerca de 1 minuto.
+A salinidade sozinha explica **63%** da temperatura. Nutrientes, oxigênio e profundidade identificam a camada da água, e o modelo linear chega a **96%**. Como a temperatura cai em curva com a profundidade (a *termoclina*), um modelo não linear chega a **99%**.
 
 ![Temperatura em função de cada variável](figuras/dispersao_variaveis.png)
 
-## 3. Preparação dos dados
+## 2. Dados e limpeza
 
-### Colunas: de 80 para 13
+O CalCOFI tem dois arquivos ligados por `Cst_Cnt`: `bottle.csv` (uma linha por medição em cada profundidade) e `cast.csv` (uma linha por estação, com data e posição).
 
-| Removidas | Motivo |
-|---|---|
-| Identificadores (`Btl_Cnt`, `Sta_ID`…) | Códigos sem significado físico |
-| Qualidade e precisão (`T_qual`, `S_prec`…) | Descrevem a medição, não a água |
-| Cópias `R_…` e colunas com 30% ou mais de ausentes | Repetidas, ou obrigariam a descartar 1/3 das linhas |
-| **Vazamento:** `R_TEMP`, `R_POTEMP`, `STheta`, `R_SIGMA`, `R_SVA`, `R_DYNHT`, `O2Sat`, `R_O2Sat`, `Oxy_µmol/Kg` | São **calculadas a partir da temperatura**. Com `STheta`, o R² salta de 0,70 para 0,999: o modelo apenas "desfaz a conta" |
+**Recorte 2005–2016.** Usamos **todas** as medições do período, o que é uma decisão de escopo e não uma amostra aleatória. Antes de 2005, só 31% das linhas têm nutrientes; depois, 92%.
 
-Ficaram **13 preditoras**: salinidade, profundidade, oxigênio, 4 nutrientes (`PO4uM`, `SiO3uM`, `NO3uM`, `NO2uM`), latitude, longitude, profundidade do fundo, distância da costa, mês e ano.
+![Medições por ano](figuras/medicoes_por_ano.png)
 
-### Linhas
+**Colunas: de 80 para 13.** Saíram identificadores, colunas de qualidade e precisão, cópias `R_…`, colunas com 30% ou mais de ausentes e **9 colunas com vazamento de dados**, calculadas a partir da própria temperatura (densidade, temperatura potencial, saturação de oxigênio…). Com a densidade, o R² iria de 0,70 para 0,999: o modelo só "desfaria a conta".
+
+**Linhas.**
 
 | Etapa | Medições restantes |
 |---|---|
 | Recorte 2005–2016 | 96.655 |
 | Remoção de duplicatas | 96.634 |
-| Remoção de valores ausentes | 88.773 |
-| Remoção de outliers (fora dos percentis 0,1% e 99,9%) | **88.143** |
+| Remoção de ausentes | 88.773 |
+| Remoção de valores fisicamente impossíveis | 88.772 |
+| Remoção de outliers (percentis 0,1% e 99,9%), com limites calculados **só no treino** | 70.700 treino + 17.465 teste |
 
-### Divisão por estação
+**Engenharia de atributos.** Criamos `log_prof` (log da profundidade, para endireitar a termoclina) e `mes_sin`/`mes_cos` (o mês é cíclico). O conjunto completo ficou com 15 variáveis.
 
-- 80% treino (70.542) e 20% teste (17.601), com `random_state=42`.
-- **Por estação** (`GroupShuffleSplit`): medições da mesma estação em profundidades vizinhas são quase iguais. Se ficassem em lados opostos, o modelo "colaria" e o R² ficaria inflado.
-- Validação cruzada de 5 partes (`GroupKFold`), também por estação.
+## 3. Como avaliamos
 
-### Métrica
-
-O **R²** mede a fração da variação explicada. O **R² ajustado** penaliza variáveis extras e é usado para comparar modelos com números diferentes de variáveis:
+- **R²** (fração da variação explicada) e **R² ajustado**, que penaliza variáveis extras e permite comparar modelos com 1 a 135 variáveis:
 
 $$R^2_{aj} = 1 - (1 - R^2)\,\frac{n - 1}{n - p - 1}$$
 
-## 4. Os modelos, passo a passo
+- **Divisão por estação** (`GroupShuffleSplit`, 80/20): medições vizinhas da mesma estação são quase iguais (Durbin-Watson = 0,37). Nenhuma estação aparece no treino e no teste ao mesmo tempo.
+- **Validação cruzada de 5 partes por estação** (`GroupKFold`).
+- **Critério de escolha, definido antes de modelar:** o maior R² da validação cruzada; entre modelos a no máximo 0,005 do melhor, o mais simples.
 
-| Passo | Modelo | Variáveis | Pergunta |
+## 4. Parte A — Modelos lineares
+
+| Modelo | R² teste | MAE (°C) | O que mostra |
 |---|---|---|---|
-| 1 | Regressão linear | 1 | A salinidade prevê a temperatura? |
-| 2 | Regressão linear | 2 | Quanto a profundidade acrescenta? |
-| 3 | Regressão linear | 13 | Até onde vai um modelo linear com tudo? |
-| — | Seleção (Lasso) | 13 → ranking | Quais variáveis importam? |
-| 4 | Regressão linear reduzida | 6 | Dá para simplificar? |
-| 5 | Gradient Boosting reduzido | 6 | Um modelo não linear faz melhor? |
-| 6 | Gradient Boosting | 13 | Qual o teto destes dados? |
+| 0. Baseline (média) | 0,000 | 3,05 | A referência mínima |
+| 1. Linear: salinidade | 0,633 | 1,58 | Responde à pergunta da base: ajuda, mas não basta |
+| 2. + profundidade | 0,731 | 1,44 | Teste F parcial: p ≈ 0 |
+| 3. 13 variáveis originais | 0,958 | 0,53 | Multicolinearidade inverte sinais (salinidade: −7,17 → +1,88) |
+| 4. 15 variáveis (engenharia) | 0,962 | 0,50 | Log e mês cíclico: ganho pequeno |
+| 5. Ridge / Lasso | 0,962 | 0,50 | Sem ganho (n ≫ p, sem overfitting) |
+| 6. Polinomial grau 2 (135 termos) | 0,985 | 0,27 | Prova a não linearidade, mas não é interpretável |
+| 7. Linear reduzida (6) | 0,959 | 0,51 | Seleção para frente |
 
-**Modelo 1 (salinidade):** R² = 0,648. A salinidade ajuda (p ≈ 0), mas sobra muita variação. Coeficiente: −7,15 °C por unidade (água salgada = água funda = fria).
+**Pressupostos (Modelo 4):** Breusch-Pagan p ≈ 0 (heterocedasticidade), Jarque-Bera p ≈ 0 (resíduos não normais), Durbin-Watson 0,37 (autocorrelação). As previsões continuam válidas, mas os p-valores são otimistas. É mais um sinal de que a relação não é linear.
 
-**Modelo 2 (+ profundidade):** R² = 0,740.
+![Resíduos do modelo linear](figuras/residuos_linear.png)
 
-**Modelo 3 (13 variáveis):** R² = 0,957, MAE = 0,54 °C. Treino, validação cruzada e teste iguais: sem overfitting. Mas a **multicolinearidade** (VIF até 188) inverte sinais: a salinidade passa de −7,15 para +1,85.
+**Seleção de variáveis.** Comparamos o ranking do caminho do Lasso com a seleção sequencial para frente. A seleção para frente venceu (R² 0,959 contra 0,923 com 6 variáveis), porque o Lasso é instável com variáveis muito correlacionadas.
 
-**Seleção com Lasso:** regressão com penalidade L1. Diminuindo a penalidade, as variáveis entram uma a uma, e essa ordem vira um ranking. O top 6 é `NO3uM`, `Month`, `NO2uM`, `Lon_Dec`, `Bottom_D` e `Salnty`. A profundidade não entra porque o nitrato já carrega a mesma informação.
+![Seleção de variáveis no modelo linear](figuras/selecao_linear.png)
 
-![R² em função do número de variáveis](figuras/curva_numero_variaveis.png)
+## 5. Parte B — Modelos não lineares
 
-**Modelo 4 (linear, 6 variáveis):** R² = 0,928.
+| Modelo | R² treino | R² validação cruzada | R² teste | MAE (°C) |
+|---|---|---|---|---|
+| 8. KNN (10 vizinhos) | 0,989 | 0,980 | 0,981 | 0,34 |
+| 9. Random Forest | 0,999 | 0,992 | 0,993 | 0,18 |
+| 10. Gradient Boosting (15) | 0,994 | 0,9925 | 0,993 | 0,20 |
+| 11. Gradient Boosting (6) | 0,990 | 0,988 | 0,989 | 0,24 |
+| **12. Gradient Boosting ajustado (6)** | **0,995** | **0,989** | **0,990** | **0,22** |
 
-**Modelo 5 (Gradient Boosting, 6 variáveis):** R² = 0,973. Com as mesmas variáveis, o modelo não linear ganha 4,5 pontos.
+**Seleção para o Gradient Boosting.** Fizemos o ranking com o próprio modelo (importância por permutação numa validação interna do treino). A curva achata a partir de 6 variáveis.
 
-**Modelo 6 (Gradient Boosting, 13 variáveis):** R² = 0,993, MAE = 0,20 °C.
+![R² pelo número de variáveis](figuras/curva_numero_variaveis.png)
 
-## 5. Comparação
+**Ajuste de hiperparâmetros.** Busca em grade com 8 combinações e validação cruzada por estação. A melhor foi `learning_rate=0.05`, `max_iter=800`, `max_leaf_nodes=63`. O ganho foi pequeno (+0,001): o modelo é pouco sensível aos hiperparâmetros.
 
 ![Comparação dos modelos](figuras/comparacao_modelos.png)
 
-| Modelo | Variáveis | R² treino | R² validação cruzada | R² teste | R² ajustado teste | MAE (°C) |
-|---|---|---|---|---|---|---|
-| 1. Linear (salinidade) | 1 | 0,646 | 0,646 | 0,648 | 0,648 | 1,58 |
-| 2. Linear (salinidade + profundidade) | 2 | 0,740 | 0,740 | 0,740 | 0,740 | 1,43 |
-| 3. Linear (13 variáveis) | 13 | 0,958 | 0,958 | 0,957 | 0,957 | 0,54 |
-| 4. Linear (6 variáveis) | 6 | 0,931 | 0,930 | 0,928 | 0,928 | 0,68 |
-| 5. Gradient Boosting (6 variáveis) | 6 | 0,978 | 0,973 | 0,973 | 0,973 | 0,38 |
-| **6. Gradient Boosting (13 variáveis)** | **13** | **0,994** | **0,993** | **0,993** | **0,993** | **0,20** |
+## 6. Ferramentas testadas: o que ficou e o que saiu
 
-Como n (17.601) é muito maior que p (até 13), o R² ajustado é praticamente igual ao R²: nenhum modelo está inflando o resultado com variáveis inúteis.
-
-## 6. Teste de robustez
-
-Para descartar vazamento, treinamos com **2005–2013** e testamos em **2014–2016**, anos que incluem o *Blob*, uma onda de calor marinha no Pacífico.
-
-| Modelo | R² 2014–2016 | MAE (°C) |
+| Ferramenta | Resultado | Decisão |
 |---|---|---|
-| Regressão linear | 0,949 | 0,61 |
-| Gradient Boosting | **0,980** | 0,36 |
+| Regressão linear (OLS) | até 0,962 | Mantida como modelo interpretável |
+| Engenharia de atributos | +0,004 | Mantida |
+| Ridge e Lasso | = linear | Descartados: não havia overfitting para corrigir |
+| Polinomial grau 2 | 0,985 | Referência: prova a não linearidade |
+| Lasso como selecionador | 0,923 (6 variáveis) | Descartado: instável com multicolinearidade |
+| Seleção para frente | 0,959 (6 variáveis) | Mantida |
+| KNN | 0,981 | Descartado: abaixo das árvores e lento |
+| Random Forest | 0,993 | Descartado: memoriza o treino (0,999) e é mais pesado |
+| Gradient Boosting | 0,993 | Mantido |
+| Importância por permutação | 6 variáveis | Mantida |
+| Busca em grade | +0,001 | Mantida |
 
 ## 7. Modelo final
 
-**Gradient Boosting (`HistGradientBoostingRegressor`) com 13 variáveis**, hiperparâmetros padrão (100 árvores, taxa de aprendizado 0,1, até 31 folhas).
+**Gradient Boosting (`HistGradientBoostingRegressor`) com 6 variáveis:** nitrato, silicato, oxigênio, profundidade, mês (seno) e fosfato.
 
-| R² treino | R² validação cruzada | R² teste | R² ajustado | MAE | RMSE |
+| R² validação cruzada | R² teste | R² ajustado | MAE | RMSE | R² 2014–2016 |
 |---|---|---|---|---|---|
-| 0,994 | 0,993 ± 0,0003 | 0,993 | 0,993 | 0,20 °C | 0,31 °C |
+| 0,989 | 0,990 | 0,990 | 0,22 °C | 0,37 °C | 0,982 |
+
+**Por que este modelo:** o melhor R² de validação cruzada foi o do Gradient Boosting com 15 variáveis (0,9925). O modelo final fica a só 0,0034 dele, usando 6 variáveis em vez de 15. Pela parcimônia, ficamos com o mais simples. O custo é de apenas 0,02 °C de erro médio.
 
 ![Modelo final](figuras/modelo_final.png)
 
-**Variáveis mais importantes** (queda no R² ao embaralhar): nitrato (0,97), silicato (0,18), oxigênio (0,11), profundidade (0,04) e mês (0,02).
+O erro é maior na superfície (0–50 m: 0,39 °C), onde sol, vento e estação variam, e menor no fundo (menos de 0,08 °C abaixo de 200 m).
 
 ![Importância das variáveis](figuras/importancia_variaveis.png)
 
 ## 8. Limitações
 
 - Vale para a costa da Califórnia em 2005–2016.
-- Os nutrientes precisam ser medidos em laboratório, então o modelo serve mais para completar dados faltantes do que para substituir o termômetro.
-- Os hiperparâmetros do Gradient Boosting não foram ajustados.
-- O mês entra como número (dezembro e janeiro ficam "longe"); uma codificação cíclica (seno/cosseno) seria melhor.
-- Os resíduos da regressão linear não são normais nem homocedásticos, então os p-valores devem ser lidos com cautela.
+- Os nutrientes exigem laboratório: o modelo serve mais para completar dados faltantes ou detectar medições suspeitas do que para substituir o termômetro.
+- A busca de hiperparâmetros foi pequena (8 combinações), e a tolerância de 0,005 da parcimônia é uma escolha nossa.
+- Os p-valores dos modelos lineares são otimistas (resíduos heterocedásticos, não normais e autocorrelacionados).
 
 ## 9. Como executar
 
@@ -174,13 +157,4 @@ pip install -r requirements.txt
 jupyter notebook temperatura_calcofi.ipynb
 ```
 
-Os arquivos são baixados automaticamente do Kaggle (`kagglehub`) para `data/` na primeira execução. A execução completa leva cerca de 1 minuto.
-
-### Estrutura
-
-```
-├── temperatura_calcofi.ipynb   # notebook com todo o trabalho
-├── figuras/                    # gráficos usados no README
-├── requirements.txt
-└── data/                       # bottle.csv e cast.csv (baixados automaticamente, fora do git)
-```
+Os arquivos são baixados automaticamente do Kaggle (`kagglehub`) para `data/` na primeira execução. A execução completa leva cerca de 9 minutos (a Random Forest e a busca de hiperparâmetros são as etapas mais lentas).
