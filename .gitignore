@@ -3,3 +3,6 @@ __pycache__/
 .ipynb_checkpoints/
 data/
 .DS_Store
+
+# material pessoal de estudo
+NOTEBOOKLM_material_de_estudo.md
